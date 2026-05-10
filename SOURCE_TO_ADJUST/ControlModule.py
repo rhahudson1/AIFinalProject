@@ -75,8 +75,21 @@ class ControlModule:
 
 
     @staticmethod
-    def control_iteration() -> np.int32:
-        ...
+    def control_iteration(demand_t: float, current_state: int, P: np.ndarray, gamma: float) -> np.int32:
+        # Safety check to make sure the library is installed
+        if mdptoolbox is None:
+            raise ImportError("The pymdptoolbox library is missing. Run: pip install pymdptoolbox")
+        # Generate the R matrix
+        R = ControlModule.generate_R(demand_t)
+
+        # Setup and run the value iteration algorithm
+        vi = mdptoolbox.mdp.ValueIteration(P, R, discount=gamma)
+        vi.run()
+
+        # Extract optimal policy
+        optimal_action = vi.policy[current_state]
+
+        return np.int32(optimal_action) # Return it as an integer
 
     @staticmethod
     def control_loop(demand: np.ndarray, 
