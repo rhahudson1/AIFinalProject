@@ -44,8 +44,35 @@ class ControlModule:
         return P
 
     @staticmethod
-    def generate_R() -> np.ndarray:
-        ...
+    def generate_R(demand_t: float) -> np.ndarray:
+        n_states = ControlModule._n_states
+        # R matrix with dimensions (Actions, States, States)
+        R = np.zeros((3, n_states, n_states), dtype=np.float64)
+
+        #Calculate lower bound power of current state
+        for a in range(3):
+            for s in range(n_states):
+                power_s = s / float(n_states)
+
+                #Check if the action moves us away from target
+                penalize = False
+                if a == 0 and demand_t > power_s:       # When demand is above decrease power
+                    penalize = True
+                elif a == 2 and demand_t < power_s:     # When demand is bellow increase power
+                    penalize = True
+
+                for ns in range(n_states):
+                    #Power lvl of the destination state
+                    power_ns = ns / float(n_states)
+                    #Absolute distance between demand and destination lvl
+                    distance = abs(demand_t - power_ns)
+                    # If the action moves away from the target x2 penalty
+                    cost = distance * 2.0 if penalize else distance
+                    # pymdptoolbox maximizes, so we use negative cost
+                    R[a, s, ns] = -cost
+
+        return R
+
 
     @staticmethod
     def control_iteration() -> np.int32:
