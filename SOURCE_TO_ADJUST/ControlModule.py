@@ -69,7 +69,7 @@ class ControlModule:
                     # If the action moves away from the target x2 penalty
                     cost = distance * 2.0 if penalize else distance
                     # pymdptoolbox maximizes, so we use negative cost
-                    R[a, s, ns] = -cost
+                    R[a, s, ns] = 1.0 -cost
 
         return R
 
@@ -83,7 +83,7 @@ class ControlModule:
         R = ControlModule.generate_R(demand_t)
 
         # Setup and run the value iteration algorithm
-        vi = mdptoolbox.mdp.ValueIteration(P, R, discount=gamma)
+        vi = mdptoolbox.mdp.ValueIteration(P, R, discount=gamma, epsilon=0.0001) # We set a small epsilon to ensure the solver is precise
         vi.run()
 
         # Extract optimal policy
@@ -97,4 +97,31 @@ class ControlModule:
                      n_states: np.int32, 
                      n_actions: np.int32,
                      gamma: np.float64) -> np.ndarray:
-        return np.zeros_like(a=demand, dtype=np.float64)
+        # Setup the MDP foundation
+        ControlModule.set_probabilities(probs, n_states)
+        P = ControlModule.generate_P()
+
+        # Prepare the response array
+        response = np.zeros_like(demand, dtype=np.float64)
+
+        # Start the simulation at state 0
+        current_state = 0
+
+        # Iterate through the demand curve
+        for t in range(len(demand)):
+            demand_t = float(demand[t])
+
+            # Get the optimal action for this step
+            action = ControlModule.control_iteration(demand_t, current_state, P, float(gamma))
+
+            # Use random.choice to simulate reactor uncertainty
+            # We pick the next state based on the probabilities in P matrix
+            next_state = np.random.choice(int(n_states), p=P[action, current_state, :])
+
+            # Update current state for the next second
+            current_state = next_state
+
+            # Store the resulting power level (0.0 to 1.0)
+            response[t] = current_state / float(n_states)
+
+        return response
