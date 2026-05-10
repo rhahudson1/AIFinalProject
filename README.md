@@ -1,1 +1,176 @@
-# AIFinalProject
+FOUNDATION HANDOFF SUMMARY (Transition Matrix P + Docs + Validation)
+
+Scope of what was done (FOUNDATION ONLY)
+- Implemented the MDP transition probability tensor P for the simplified reactor model (100 states, 3 actions).
+- Implemented strict boundary handling for state 0 and state 99.
+- Added an easy-to-run validation script that checks P’s shape, row sums, non-negativity, no NaNs, and explicit edge cases.
+- Added an MDP modeling draft for the report (states, actions, transitions, conceptual cost, dimensions, boundary handling).
+- Added partner handoff notes.
+
+IMPORTANT: Not implemented (left for partners / later work)
+- Cost/cost tensor C (or rewards R)
+- Value Iteration / MDP solver integration
+- Full control loop implementation
+- Evaluation metrics/experiments and final report integration
+- Additional reactor JSONs (e.g., R4.json)
+
+
+1) Project structure (where things are)
+- Core code folder: SOURCE_TO_ADJUST/
+  - main.py
+  - ControlModule.py
+  - Reactor.py
+  - DemandGenerator.py
+  - Plotter.py
+  - Metrics.py
+- Reactor JSON configs: SOURCE_TO_ADJUST/Reactors/
+  - R0.json, R1.json, R2.json, R3.json
+- Validation script for P:
+  - SOURCE_TO_ADJUST/validate_transition_matrix.py
+- Report/draft + handoff docs (project root):
+  - mdp_modeling_draft.md
+  - handoff_notes.md
+  - FOUNDATION_HANDOFF_SUMMARY.txt (this file)
+
+
+2) Reactor JSON structure (what probabilities mean)
+Each reactor JSON includes:
+- model, effective_section, neutron_flux, core_volume, fision_energy
+- probabilities:
+  - probabilities["decrease"] = [p(-2), p(-1), p(0)]
+  - probabilities["maintain"] = [p(-1), p(0), p(+1)]
+  - probabilities["increase"] = [p(0), p(+1), p(+2)]
+
+These are used as the stochastic outcomes of taking an action at a given power state.
+
+
+3) MDP definition used (high level)
+- States: s in {0, 1, 2, ..., 99}
+  - Each state is a 1% reactor power interval.
+  - State 0 ≈ 0–1% power
+  - State 99 ≈ 99–100% power
+- Actions (3 total):
+  - decrease
+  - maintain
+  - increase
+- Transition model:
+  - P[action, current_state, next_state] = probability
+  - P has shape (3, 100, 100)
+
+
+4) Where P is generated (exact code location)
+File: SOURCE_TO_ADJUST/ControlModule.py
+
+Key methods:
+- ControlModule.set_probabilities(probs, n_states=100)
+  - Stores the reactor probabilities and state count inside ControlModule.
+- ControlModule.generate_P()
+  - Builds and returns P with shape (3, n_states, n_states).
+
+This was done to keep the original project’s no-argument signature for generate_P() while still reading probabilities from the reactor JSON flow.
+
+
+5) Action order + movement mapping (must match everywhere)
+Action index order used throughout P:
+- 0 = decrease
+- 1 = maintain
+- 2 = increase
+
+Movement outcomes per action (exact mapping):
+- decrease: [-2, -1,  0]
+- maintain: [-1,  0, +1]
+- increase: [ 0, +1, +2]
+
+Probability order matches the JSON lists exactly in the same order as above.
+
+
+6) Boundary handling rules (states 0 and 99)
+The reactor state is clipped so it can never go outside [0, 99].
+
+For any action outcome:
+- next_state = current_state + movement
+- if next_state < 0, next_state becomes 0
+- if next_state > 99, next_state becomes 99
+
+Multiple outcomes can collapse to the same boundary state; therefore probability is accumulated using:
+- P[a, s, ns] += prob
+and not assigned with equals.
+
+Examples:
+- current_state = 0, action = decrease:
+  - -2 clips to 0
+  - -1 clips to 0
+  -  0 stays at 0
+  => all probability mass ends at state 0, so P[decrease, 0, 0] = 1
+
+- current_state = 99, action = increase:
+  -  0 stays at 99
+  - +1 clips to 99
+  - +2 clips to 99
+  => all probability mass ends at state 99, so P[increase, 99, 99] = 1
+
+
+7) How probabilities are wired from JSON into P (data flow)
+In SOURCE_TO_ADJUST/main.py, the project builds:
+- probs = np.array([
+    reactor.probabilities["decrease"],
+    reactor.probabilities["maintain"],
+    reactor.probabilities["increase"],
+  ])
+
+The validator follows the same convention and then calls:
+- ControlModule.set_probabilities(probs, 100)
+- P = ControlModule.generate_P()
+
+
+8) Validation/testing for P (how to run + what it checks)
+Validation script:
+- SOURCE_TO_ADJUST/validate_transition_matrix.py
+
+How to run from project root:
+python "SOURCE_TO_ADJUST/validate_transition_matrix.py" -i "SOURCE_TO_ADJUST/Reactors/R0.json"
+python "SOURCE_TO_ADJUST/validate_transition_matrix.py" -i "SOURCE_TO_ADJUST/Reactors/R1.json"
+python "SOURCE_TO_ADJUST/validate_transition_matrix.py" -i "SOURCE_TO_ADJUST/Reactors/R2.json"
+python "SOURCE_TO_ADJUST/validate_transition_matrix.py" -i "SOURCE_TO_ADJUST/Reactors/R3.json"
+
+Expected behavior:
+- No output if all checks pass
+- Exit code 0 on success
+- AssertionError on failure
+
+Validation checks:
+- P is a NumPy array
+- P.shape == (3, 100, 100)
+- No NaN values in P
+- No negative probabilities in P
+- For every action a and state s: sum(P[a, s, :]) == 1 (tolerance 1e-8)
+- Explicit edge-case distributions are checked:
+  - decrease from state 0 accumulates entirely into state 0
+  - decrease from state 1 never goes below 0 (correct accumulation)
+  - maintain from state 0 never goes below 0 (correct accumulation)
+  - maintain from state 99 never goes above 99 (correct accumulation; handles zero-prob transitions)
+  - increase from state 98 never goes above 99 (correct accumulation)
+  - increase from state 99 accumulates entirely into state 99
+
+
+9) MDP modeling draft + topology graph description
+MDP draft file:
+- mdp_modeling_draft.md
+
+It includes:
+- State space S = {0..99}
+- Action space A = {decrease, maintain, increase}
+- Transition model P(s' | s, a) from reactor JSON
+- Conceptual cost C(s, a, s') description (demand-dependent, distance-to-target, away-from-target x2 penalty concept)
+- Matrix dimensions (P is 3 x 100 x 100)
+- Boundary clipping explanation
+- A simplified topology example for states 0..8 plus a Mermaid sketch showing the neighbor-style transitions
+
+
+10) What partners should do next (remaining work)
+Partners can build on this foundation by implementing:
+- Cost tensor / reward matrix (C or R), including demand dependence
+- MDP solver integration (Value Iteration or another solver) using P and the chosen cost/reward
+- The control_iteration / control_loop logic to choose actions over time for each demand point
+- Metrics, experiments, and final report sections/results
+
